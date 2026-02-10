@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """SPARC Member Management – Flask web application."""
 
+import os
+
 from flask import Flask, jsonify, render_template, request
 import psycopg2
 import psycopg2.extras
 
 app = Flask(__name__)
-DB_NAME = "sparc"
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL",
+    "postgresql://postgres:***REDACTED***@turntable.proxy.rlwy.net:57735/railway",
+)
 
 EDITABLE_COLUMNS = {
     "firstname",
@@ -24,7 +29,7 @@ EDITABLE_COLUMNS = {
 
 
 def get_db():
-    conn = psycopg2.connect(dbname=DB_NAME)
+    conn = psycopg2.connect(DATABASE_URL)
     conn.autocommit = False
     return conn
 
