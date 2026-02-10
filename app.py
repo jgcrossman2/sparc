@@ -8,10 +8,9 @@ import psycopg2
 import psycopg2.extras
 
 app = Flask(__name__)
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL",
-    "postgresql://postgres:***REDACTED***@turntable.proxy.rlwy.net:57735/railway",
-)
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL environment variable is required")
 
 EDITABLE_COLUMNS = {
     "firstname",

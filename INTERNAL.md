@@ -15,8 +15,8 @@ https://sparc-web-production.up.railway.app
 ## Database
 
 ### Connection
-- **Railway public URL:** `postgresql://postgres:***REDACTED***@turntable.proxy.rlwy.net:57735/railway`
-- **Railway internal URL:** `${{Postgres.DATABASE_URL}}` (used by the app service via env var)
+- **Railway:** Set via `DATABASE_URL` env var on the `sparc-web` service (references `${{Postgres.DATABASE_URL}}`)
+- **Public proxy:** Available in Railway dashboard under Postgres service > Connect tab
 - **Local:** `psql -d sparc`
 
 ### Tables
@@ -77,12 +77,13 @@ https://sparc-web-production.up.railway.app
 
 ## Local Development
 ```bash
-# Run locally (connects to Railway DB by default)
-python3 app.py
-# Open http://localhost:5001
-
-# To use local DB instead:
+# Run locally against local DB:
 DATABASE_URL=postgresql:///sparc python3 app.py
+
+# Run locally against Railway DB (get URL from Railway dashboard):
+DATABASE_URL="postgresql://..." python3 app.py
+
+# Open http://localhost:5001
 ```
 
 ## Known Issues
