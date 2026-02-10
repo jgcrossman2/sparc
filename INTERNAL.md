@@ -74,6 +74,13 @@ https://sparc-web-production.up.railway.app
 - **Env vars on sparc-web:** `DATABASE_URL=${{Postgres.DATABASE_URL}}`
 - **Deploy:** `railway up` from project root (or push to linked GitHub repo)
 - **CLI:** `brew install railway`, then `railway login`
+- **Redeploy:** `railway service redeploy --service sparc-web --yes`
+
+### Security Notes
+- `DATABASE_URL` is required as an env var — never hardcode credentials in source
+- On Railway, the sparc-web service references `${{Postgres.DATABASE_URL}}` so it auto-updates if Postgres vars change
+- Credentials were rotated on 2026-02-10 after an accidental commit exposed the original password
+- Used `git-filter-repo` to scrub the password from git history and force-pushed
 
 ## Local Development
 ```bash
@@ -103,3 +110,8 @@ DATABASE_URL="postgresql://..." python3 app.py
 9. Created Procfile + requirements.txt for deployment
 10. Deployed to Railway via `railway up`
 11. Generated public domain: https://sparc-web-production.up.railway.app
+12. GitGuardian flagged exposed PostgreSQL URI in GitHub
+13. Removed hardcoded credentials from app.py and INTERNAL.md; app now requires DATABASE_URL env var
+14. Scrubbed password from git history with git-filter-repo, force-pushed cleaned history
+15. Rotated database password on Railway (ALTER USER + updated all Postgres env vars)
+16. Redeployed sparc-web, verified app works with new credentials
