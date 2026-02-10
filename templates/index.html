@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SPARC Member Management</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f5; color: #333; }
+  header { background: #1a3a5c; color: #fff; padding: 12px 24px; display: flex; align-items: center; gap: 16px; }
+  header img { height: 50px; }
+  header h1 { font-size: 1.3rem; flex: 1; }
+  #member-count { font-size: 0.85rem; opacity: 0.8; }
+  .toolbar { padding: 12px 24px; background: #fff; border-bottom: 1px solid #ddd; display: flex; gap: 12px; align-items: center; }
+  #search { padding: 8px 12px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.9rem; width: 320px; }
+  .table-wrap { padding: 12px 24px 24px; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; background: #fff; font-size: 0.85rem; }
+  thead th { background: #1a3a5c; color: #fff; padding: 10px 8px; text-align: left; cursor: pointer; user-select: none; white-space: nowrap; position: sticky; top: 0; z-index: 1; }
+  thead th:hover { background: #244b73; }
+  thead th .sort-arrow { margin-left: 4px; font-size: 0.7rem; }
+  tbody tr { border-bottom: 1px solid #eee; }
+  tbody tr:nth-child(even) { background: #fafafa; }
+  tbody tr:hover { background: #e8f0fe; }
+  tbody tr.edited { background: #fff8e1; }
+  tbody tr.saved { animation: flash-green 0.6s; }
+  @keyframes flash-green { 0% { background: #c8e6c9; } 100% { background: transparent; } }
+  tbody td { padding: 6px 8px; vertical-align: middle; }
+  tbody td input[type="text"],
+  tbody td input[type="number"],
+  tbody td select { width: 100%; padding: 4px 6px; border: 1px solid #ccc; border-radius: 3px; font-size: 0.85rem; background: #fff; }
+  tbody td input[type="text"] { min-width: 80px; }
+  tbody td input[type="number"] { width: 60px; }
+  tbody td select { min-width: 100px; }
+  td.active-cell { text-align: center; }
+  td.active-cell input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
+  .btn-save { padding: 4px 12px; background: #1a73e8; color: #fff; border: none; border-radius: 3px; cursor: pointer; font-size: 0.8rem; white-space: nowrap; }
+  .btn-save:hover { background: #1557b0; }
+  .btn-save:disabled { background: #aaa; cursor: default; }
+  .toast { position: fixed; bottom: 24px; right: 24px; padding: 12px 20px; border-radius: 6px; color: #fff; font-size: 0.9rem; z-index: 1000; opacity: 0; transition: opacity 0.3s; }
+  .toast.show { opacity: 1; }
+  .toast.success { background: #2e7d32; }
+  .toast.error { background: #c62828; }
+  .loading { text-align: center; padding: 40px; font-size: 1.1rem; color: #666; }
+  .inactive-row { opacity: 0.55; }
+</style>
+</head>
+<body>
+
+<header>
+  <img src="/static/SPARC-logo.png" alt="SPARC Logo">
+  <h1>Member Management</h1>
+  <span id="member-count"></span>
+</header>
+
+<div class="toolbar">
+  <input type="text" id="search" placeholder="Search by name, email, phone, board contact...">
+</div>
+
+<div class="table-wrap">
+  <div id="loading" class="loading">Loading members...</div>
+  <table id="members-table" style="display:none">
+    <thead>
+      <tr>
+        <th data-col="lastname">Last Name <span class="sort-arrow"></span></th>
+        <th data-col="firstname">First Name <span class="sort-arrow"></span></th>
+        <th data-col="phone">Phone <span class="sort-arrow"></span></th>
+        <th data-col="email">Email <span class="sort-arrow"></span></th>
+        <th data-col="board_contact">Board Contact <span class="sort-arrow"></span></th>
+        <th data-col="membership_level">Membership Level <span class="sort-arrow"></span></th>
+        <th data-col="attendance_notes">Attendance Notes <span class="sort-arrow"></span></th>
+        <th data-col="outreach_notes">Outreach Notes <span class="sort-arrow"></span></th>
+        <th data-col="tickets_feb_2026">Tickets (Feb) <span class="sort-arrow"></span></th>
+        <th data-col="tickets_apr">Tickets (Apr) <span class="sort-arrow"></span></th>
+        <th data-col="active">Active <span class="sort-arrow"></span></th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+const TEXT_FIELDS = ["firstname","lastname","phone","email","board_contact","attendance_notes","outreach_notes"];
+const INT_FIELDS = ["tickets_feb_2026","tickets_apr"];
+
+let members = [];
+let membershipLevels = [];
+let sortCol = "lastname";
+let sortAsc = true;
+let originals = {};   // id -> snapshot of original values
+let dirty = {};       // id -> set of changed field names
+let searchTimer = null;
+
+// ── Init ────────────────────────────────────────────────────────────────────
+
+async function init() {
+  const [membersResp, levelsResp] = await Promise.all([
+    fetch("/api/members"),
+    fetch("/api/membership_levels"),
+  ]);
+  members = await membersResp.json();
+  membershipLevels = await levelsResp.json();
+
+  // Store originals
+  members.forEach(m => { originals[m.id] = {...m}; });
+
+  document.getElementById("loading").style.display = "none";
+  document.getElementById("members-table").style.display = "";
+  render();
+}
+
+// ── Rendering ────────────────────────────────────────────────────────────────
+
+function render() {
+  const sorted = [...members].sort((a, b) => {
+    let va = a[sortCol], vb = b[sortCol];
+    if (va == null) va = "";
+    if (vb == null) vb = "";
+    if (typeof va === "string") va = va.toLowerCase();
+    if (typeof vb === "string") vb = vb.toLowerCase();
+    if (va < vb) return sortAsc ? -1 : 1;
+    if (va > vb) return sortAsc ? 1 : -1;
+    return 0;
+  });
+
+  document.getElementById("member-count").textContent = `${members.length} members`;
+  updateSortArrows();
+
+  const tbody = document.getElementById("tbody");
+  tbody.innerHTML = "";
+
+  sorted.forEach(m => {
+    const tr = document.createElement("tr");
+    tr.dataset.id = m.id;
+    if (!m.active) tr.classList.add("inactive-row");
+    if (dirty[m.id] && dirty[m.id].size > 0) tr.classList.add("edited");
+
+    // Text fields
+    TEXT_FIELDS.forEach(col => {
+      const td = document.createElement("td");
+      const inp = document.createElement("input");
+      inp.type = "text";
+      inp.value = m[col] ?? "";
+      inp.addEventListener("input", () => markDirty(m.id, col, inp.value));
+      td.appendChild(inp);
+      tr.appendChild(td);
+    });
+
+    // Membership level dropdown
+    const tdLevel = document.createElement("td");
+    const sel = document.createElement("select");
+    const emptyOpt = document.createElement("option");
+    emptyOpt.value = "";
+    emptyOpt.textContent = "— none —";
+    sel.appendChild(emptyOpt);
+    membershipLevels.forEach(lv => {
+      const opt = document.createElement("option");
+      opt.value = lv;
+      opt.textContent = lv;
+      if (m.membership_level === lv) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    sel.addEventListener("change", () => markDirty(m.id, "membership_level", sel.value || null));
+    tdLevel.appendChild(sel);
+    tr.appendChild(tdLevel);
+
+    // Integer fields
+    INT_FIELDS.forEach(col => {
+      const td = document.createElement("td");
+      const inp = document.createElement("input");
+      inp.type = "number";
+      inp.min = "0";
+      inp.value = m[col] ?? "";
+      inp.addEventListener("input", () => markDirty(m.id, col, inp.value === "" ? null : parseInt(inp.value, 10)));
+      td.appendChild(inp);
+      tr.appendChild(td);
+    });
+
+    // Active checkbox
+    const tdActive = document.createElement("td");
+    tdActive.className = "active-cell";
+    const chk = document.createElement("input");
+    chk.type = "checkbox";
+    chk.checked = !!m.active;
+    chk.addEventListener("change", () => {
+      markDirty(m.id, "active", chk.checked);
+      tr.classList.toggle("inactive-row", !chk.checked);
+    });
+    tdActive.appendChild(chk);
+    tr.appendChild(tdActive);
+
+    // Save button
+    const tdAction = document.createElement("td");
+    const btn = document.createElement("button");
+    btn.className = "btn-save";
+    btn.textContent = "Save";
+    btn.disabled = !(dirty[m.id] && dirty[m.id].size > 0);
+    btn.addEventListener("click", () => saveMember(m.id));
+    tdAction.appendChild(btn);
+    tr.appendChild(tdAction);
+
+    tbody.appendChild(tr);
+  });
+}
+
+function markDirty(id, col, newVal) {
+  const orig = originals[id];
+  // Normalise for comparison
+  const origVal = orig[col] ?? null;
+  const nv = (newVal === "" || newVal === undefined) ? null : newVal;
+
+  if (!dirty[id]) dirty[id] = new Set();
+
+  if (String(origVal ?? "") === String(nv ?? "")) {
+    dirty[id].delete(col);
+  } else {
+    dirty[id].add(col);
+  }
+
+  // Update the member object in memory
+  const m = members.find(x => x.id === id);
+  if (m) m[col] = nv;
+
+  // Update row styling and save button without full re-render
+  const tr = document.querySelector(`tr[data-id="${id}"]`);
+  if (tr) {
+    const hasDirty = dirty[id] && dirty[id].size > 0;
+    tr.classList.toggle("edited", hasDirty);
+    tr.querySelector(".btn-save").disabled = !hasDirty;
+  }
+}
+
+// ── Save ────────────────────────────────────────────────────────────────────
+
+async function saveMember(id) {
+  const changedFields = dirty[id];
+  if (!changedFields || changedFields.size === 0) return;
+
+  const m = members.find(x => x.id === id);
+  const payload = {};
+  changedFields.forEach(col => { payload[col] = m[col]; });
+
+  const tr = document.querySelector(`tr[data-id="${id}"]`);
+  const btn = tr.querySelector(".btn-save");
+  btn.disabled = true;
+  btn.textContent = "Saving...";
+
+  try {
+    const resp = await fetch(`/api/members/${id}`, {
+      method: "PUT",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload),
+    });
+    if (!resp.ok) {
+      const err = await resp.json();
+      throw new Error(err.error || "Save failed");
+    }
+    const updated = await resp.json();
+    // Update local state
+    Object.assign(m, updated);
+    originals[id] = {...updated};
+    delete dirty[id];
+    btn.textContent = "Save";
+    tr.classList.remove("edited");
+    tr.classList.add("saved");
+    setTimeout(() => tr.classList.remove("saved"), 700);
+    showToast("Saved!", "success");
+  } catch (e) {
+    btn.textContent = "Save";
+    btn.disabled = false;
+    showToast(e.message, "error");
+  }
+}
+
+// ── Sorting ─────────────────────────────────────────────────────────────────
+
+document.querySelectorAll("thead th[data-col]").forEach(th => {
+  th.addEventListener("click", () => {
+    const col = th.dataset.col;
+    if (sortCol === col) {
+      sortAsc = !sortAsc;
+    } else {
+      sortCol = col;
+      sortAsc = true;
+    }
+    render();
+  });
+});
+
+function updateSortArrows() {
+  document.querySelectorAll("thead th[data-col]").forEach(th => {
+    const arrow = th.querySelector(".sort-arrow");
+    if (th.dataset.col === sortCol) {
+      arrow.textContent = sortAsc ? "\u25B2" : "\u25BC";
+    } else {
+      arrow.textContent = "";
+    }
+  });
+}
+
+// ── Search ──────────────────────────────────────────────────────────────────
+
+document.getElementById("search").addEventListener("input", (e) => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(async () => {
+    const q = e.target.value.trim();
+    const resp = await fetch(`/api/members?search=${encodeURIComponent(q)}`);
+    members = await resp.json();
+    members.forEach(m => {
+      if (!originals[m.id]) originals[m.id] = {...m};
+    });
+    render();
+  }, 300);
+});
+
+// ── Toast ───────────────────────────────────────────────────────────────────
+
+function showToast(msg, type) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.className = "toast show " + type;
+  setTimeout(() => { t.className = "toast"; }, 2500);
+}
+
+// ── Go ──────────────────────────────────────────────────────────────────────
+
+init();
+</script>
+</body>
+</html>
